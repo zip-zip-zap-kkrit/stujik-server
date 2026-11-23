@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Секреты и локальные данные
+serviceAccountKey.json
+kkrit-schedule-firebase-adminsdk-*.json
+tokens.db
+.env
+
+# IDE
+.idea/

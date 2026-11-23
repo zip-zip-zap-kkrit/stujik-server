@@ -1,0 +1,150 @@
+import pdfplumber
+import os
+from typing import List, Tuple
+from dataclasses import dataclass
+import re
+
+settings = {
+            "vertical_strategy": "lines",
+            "horizontal_strategy": "lines",
+
+            "snap_tolerance": 3,
+            "join_tolerance": 3,
+            "intersection_tolerance": 5,
+            "text_x_tolerance": 3,
+            "text_y_tolerance": 3,
+
+            "edge_min_length": 3,
+}
+
+@dataclass
+class ScheduleEntry:
+    id: int | None
+    date: str
+    group: str
+    lessonNumber: int
+    subject: str
+    teacher: str
+    room: str
+    DO: bool
+
+
+def parse_pdf(pdf_path, pdf_date):
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+
+        tables = page.extract_tables(table_settings=settings)
+        # im = page.to_image(resolution=1080)
+        # im.debug_tablefinder(settings)
+        # im.show()
+
+        # print(tables)
+
+        entries: List[ScheduleEntry] = []
+
+        for itx in range(len(tables)):
+
+            table = tables[itx]
+            # print(table)
+
+
+
+            hindex = 2
+            if itx == 0:
+                hindex = 2
+            else:
+                hindex = 0
+
+            header = table[hindex]
+
+            groups: list[str] = []
+            group_columns: list[int] = []
+
+            # группы начинаются с колонки 2 и идут через одну
+            for col in range(2, len(header), 2):
+                group_name = header[col]
+                if group_name:
+                    groups.append(group_name)
+                    group_columns.append(col)
+
+            # print(groups)
+            # print(group_columns)
+
+            # строки с занятиями
+            for row in table[hindex+1:]:
+                if not row or not row[0]:
+                    continue
+
+                try:
+                    lesson_number = int(row[0])
+                except ValueError:
+                    continue
+
+                for group, col in zip(groups, group_columns):
+                    subject_cell = row[col]
+                    room_cell = row[col + 1]
+
+                    if not subject_cell:
+                        continue
+
+                    subject, teacher = parse_subject_and_teacher(subject_cell)
+
+                    DO = False
+                    room = ""
+
+                    if room_cell:
+                        value = room_cell.strip()
+                        if value.upper() == "ДО":
+                            DO = True
+                        else:
+                            room = value.replace("\n", "")
+
+                    entries.append(
+                        ScheduleEntry(
+                            id=None,
+                            date=pdf_date,
+                            group=group,
+                            lessonNumber=lesson_number,
+                            subject=subject,
+                            teacher=teacher,
+                            room=room,
+                            DO=DO,
+                        )
+                    )
+
+            # print(entries)
+        return entries
+
+
+teacher_regex = re.compile(
+    r"[А-ЯЁ][а-яё\-]+\s+[А-ЯЁ]\.[А-ЯЁ]\.?"
+)
+
+_space_re = re.compile(r"\s+")
+
+def normalize_text(text: str) -> str:
+    return _space_re.sub(" ", text.replace("\n", " ")).strip()
+
+def parse_subject_and_teacher(text: str) -> Tuple[str, str]:
+    """
+    Возвращает (subject, teacher)
+    """
+    if not text:
+        return "", ""
+
+    text = normalize_text(text)
+
+    matches = list(teacher_regex.finditer(text))
+
+    if matches:
+        teacher = " ".join(m.group(0) for m in matches)
+
+        first_start = matches[0].start()
+        subject = text[:first_start].strip()
+    else:
+        subject = text
+        teacher = ""
+
+    return subject, teacher
+
+# print(parse_pdf("data/pdfs/11.09.2025.pdf"))

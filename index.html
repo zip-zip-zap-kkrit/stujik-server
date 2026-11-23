@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Расписание Колледжа</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans antialiased selection:bg-blue-200">
+
+    <div id="welcome-screen" class="hidden min-h-screen flex-col items-center justify-center p-6">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center">
+            <h1 class="text-3xl font-bold mb-2 text-gray-900">Привет! 👋</h1>
+            <p class="text-gray-500 mb-6">Выбери свою группу, чтобы продолжить</p>
+            
+            <div id="groups-list" class="flex flex-col gap-2 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                <p class="text-gray-400">Загрузка групп...</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="schedule-screen" class="hidden min-h-screen flex-col max-w-md mx-auto bg-gray-50 shadow-2xl relative">
+        
+        <header class="bg-white px-5 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+            <h1 id="header-group" class="text-xl font-bold text-gray-900">Группа</h1>
+            <button onclick="logout()" class="text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1.5 rounded-lg active:bg-blue-100 transition">
+                Сменить
+            </button>
+        </header>
+
+        <div class="flex items-center justify-between px-4 py-3 bg-white border-t border-gray-100">
+            <button onclick="changeWeek(-1)" class="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 active:scale-95 transition">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+            </button>
+            <div id="week-label" class="font-semibold text-gray-700 capitalize text-center text-sm">
+                </div>
+            <button onclick="changeWeek(1)" class="w-10 h-10 flex items-center justify-center rounded-full bg-gray-50 text-gray-600 hover:bg-gray-100 active:scale-95 transition">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+            </button>
+        </div>
+
+        <div id="days-row" class="flex justify-between px-4 pb-4 bg-white shadow-sm rounded-b-2xl">
+            </div>
+
+        <div id="schedule-list" class="flex-1 p-4 space-y-3 overflow-y-auto pb-8">
+            </div>
+    </div>
+
+    <script>
+        // === КОНФИГУРАЦИЯ ===
+        const API_BASE = window.location.origin; // ТВОЙ АДРЕС СЕРВЕРА
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[char]));
+        }
+        
+        // === СОСТОЯНИЕ ===
+        let currentGroup = localStorage.getItem('savedGroup');
+        let selectedDate = new Date(); // При запуске всегда сегодня
+
+        // === ИНИЦИАЛИЗАЦИЯ ===
+        function init() {
+            if (currentGroup) {
+                showScreen('schedule-screen');
+                document.getElementById('header-group').textContent = currentGroup;
+                updateWeekView();
+                loadSchedule();
+            } else {
+                showScreen('welcome-screen');
+                loadGroups();
+            }
+        }
+
+        // === НАВИГАЦИЯ ЭКРАНОВ ===
+        function showScreen(id) {
+            document.getElementById('welcome-screen').classList.replace('flex', 'hidden');
+            document.getElementById('schedule-screen').classList.replace('flex', 'hidden');
+            document.getElementById(id).classList.replace('hidden', 'flex');
+        }
+
+        function logout() {
+            localStorage.removeItem('savedGroup');
+            currentGroup = null;
+            selectedDate = new Date(); // Сброс на сегодня
+            init();
+        }
+
+        // === ЛОГИКА ГРУПП ===
+        async function loadGroups() {
+            const list = document.getElementById('groups-list');
+            try {
+                const res = await fetch(`${API_BASE}/groups`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const groups = Array.isArray(data.groups) ? data.groups : [];
+
+                if (groups.length === 0) {
+                    list.innerHTML = `<p class="text-gray-400">Группы пока не загружены.</p>`;
+                    return;
+                }
+
+                list.innerHTML = '';
+                groups.forEach(({ group }) => {
+                    const button = document.createElement('button');
+                    button.className = 'w-full text-left px-5 py-4 bg-gray-50 hover:bg-blue-50 border border-gray-100 rounded-xl text-gray-800 font-medium transition active:scale-95';
+                    button.textContent = group;
+                    button.addEventListener('click', () => selectGroup(group));
+                    list.appendChild(button);
+                });
+            } catch (e) {
+                list.innerHTML = `<p class="text-red-500 text-sm">Ошибка подключения к серверу.<br>Убедись, что настроен CORS.</p>`;
+            }
+        }
+
+        function selectGroup(group) {
+            localStorage.setItem('savedGroup', group);
+            currentGroup = group;
+            init();
+        }
+
+        // === ЛОГИКА ДАТ ===
+        function getMonday(d) {
+            d = new Date(d);
+            let day = d.getDay(), diff = d.getDate() - day + (day == 0 ? -6 : 1);
+            return new Date(d.setDate(diff));
+        }
+
+        function formatDate(d) {
+            // YYYY-MM-DD локального часового пояса
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        let dayOffset = 0; // Разница в днях от пн (0-5)
+
+        function changeWeek(offset) {
+            // Сохраняем текущий день недели (Пн=0...Сб=5)
+            selectedDate.setDate(selectedDate.getDate() + (offset * 7));
+            updateWeekView();
+            loadSchedule();
+        }
+
+        function selectDay(dateStr, index) {
+            selectedDate = new Date(dateStr);
+            dayOffset = index; // Запоминаем номер дня недели
+            updateWeekView();
+            loadSchedule();
+        }
+
+        function updateWeekView() {
+            const todayStr = formatDate(new Date());
+            const monday = getMonday(selectedDate);
+            const saturday = new Date(monday);
+
+            saturday.setDate(saturday.getDate() + 5);
+            
+            const months = ['Января','Февраля','Марта','Апреля','Мая','Июня','Июля','Августа','Сентября','Октября','Ноября','Декабря'];
+            
+            // Заголовок недели
+            document.getElementById('week-label').textContent = 
+                `${monday.getDate()} - ${saturday.getDate()} ${months[monday.getMonth()]}`;
+
+
+            // Генерация кнопок Пн-Сб
+            const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+            let daysHtml = '';
+            
+            for(let i = 0; i < 6; i++) {
+                let d = new Date(monday);
+                d.setDate(d.getDate() + i);
+
+                let dStr = formatDate(d);
+                
+                let isSelected = dStr === formatDate(selectedDate);
+                let isToday = dStr === todayStr;
+                
+                let btnClass = isSelected ? "bg-blue-600 text-white shadow-md" : "bg-white text-gray-500";
+                let ringClass = isToday ? "ring-2 ring-blue-400 ring-offset-2" : "";
+
+                daysHtml += `
+                    <button onclick="selectDay('${dStr}', ${i})" class="flex flex-col items-center justify-center w-12 h-14 rounded-xl transition-all duration-300 ${btnClass} ${ringClass}">
+                        <span class="text-[10px] uppercase font-bold mb-0.5 ${isSelected ? 'text-blue-100' : 'text-gray-400'}">${dayNames[i]}</span>
+                        <span class="text-base font-bold">${d.getDate()}</span>
+                    </button>
+                `;
+            }
+            document.getElementById('days-row').innerHTML = daysHtml;
+        }
+
+        // === ЛОГИКА РАСПИСАНИЯ ===
+        async function loadSchedule() {
+            const list = document.getElementById('schedule-list');
+            list.innerHTML = `
+                <div class="animate-pulse space-y-3">
+                    <div class="h-24 bg-gray-200 rounded-xl w-full"></div>
+                    <div class="h-24 bg-gray-200 rounded-xl w-full"></div>
+                </div>`;
+            
+            list.style.opacity = '0';
+            list.style.transform = 'translateY(10px)';
+
+            await new Promise(r => setTimeout(r, 150));
+                
+            const dStr = formatDate(selectedDate);
+            
+            try {
+                const url = `${API_BASE}/lessonsByGroup/${dStr}/${encodeURIComponent(currentGroup)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+
+                if (!res.ok || data.error || !data.schedule || data.schedule.length === 0) {
+                    const message = data.detail || data.error || 'Нет расписания на этот день';
+                    list.innerHTML = `
+                        <div class="flex flex-col items-center justify-center h-40 opacity-60">
+                            <svg class="w-12 h-12 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                            </svg>
+                            <p class="text-gray-500 font-medium text-center px-6">${message}</p>
+                        </div>`;
+                }
+
+                else {
+                    list.innerHTML = data.schedule.map(s => {
+                        const lessonNumber = s.lessonNumber ?? s.number ?? '';
+                        const subject = escapeHtml(s.subject);
+                        const teacher = escapeHtml(s.teacher || 'Преподаватель не указан');
+                        const room = escapeHtml(s.room || '—');
+                        const isHomeStudy = s.DO === 1 || s.DO === true;
+                        const homeMark = isHomeStudy
+                            ? '<div class="absolute left-0 top-0 bottom-0 w-1 bg-green-400" title="Домашнее обучение"></div>'
+                            : '';
+
+                        return `
+                        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex items-center gap-4 relative overflow-hidden transition hover:shadow-md">
+                            ${homeMark}
+
+                            <div class="w-12 h-12 flex-shrink-0 bg-blue-50 text-blue-600 font-black rounded-xl flex items-center justify-center text-xl">
+                                ${escapeHtml(lessonNumber)}
+                            </div>
+
+                            <div class="flex-1 min-w-0">
+                                <h3 class="font-bold text-gray-900 leading-tight mb-1 truncate" title="${subject}">
+                                    ${subject}
+                                </h3>
+                                <p class="text-xs text-gray-500 font-medium truncate" title="${teacher}">
+                                    ${teacher}
+                                </p>
+                            </div>
+
+                            <div class="flex-shrink-0 px-3 py-1.5 bg-gray-100 rounded-lg text-xs font-black text-gray-700 min-w-[3rem] text-center">
+                                ${room}
+                            </div>
+                        </div>
+                    `;
+                    }).join('');}
+
+            } catch (e) {
+                list.innerHTML = `
+                    <div class="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-medium text-center">
+                        Не удалось загрузить расписание.
+                    </div>`;
+            }
+            list.style.transition = 'all 0.3s ease';
+            list.style.opacity = '1';
+            list.style.transform = 'translateY(0)';
+        }
+
+        // Запуск
+        init();
+    </script>
+</body>
+</html>
